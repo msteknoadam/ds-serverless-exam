@@ -44,36 +44,26 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
 
 		const queryParams = event.queryStringParameters;
 
-		if (!isValidQueryParams(queryParams)) {
-			return {
-				statusCode: 500,
-				headers: {
-					"content-type": "application/json",
-				},
-				body: JSON.stringify({
-					message: `Incorrect type. Must match Query parameters schema`,
-					schema: schema.definitions["MovieCrewMembersByMovieQueryParams"],
-				}),
-			};
-		}
-
-		const name = queryParams?.name;
-
 		const commandInput: QueryCommandInput | ScanCommandInput = {
 			TableName: process.env.TABLE_NAME,
-			IndexName: "roleIx",
-			KeyConditionExpression: "movieId = :m and begins_with(crewRole, :r) ",
+			KeyConditionExpression: "#movieId = :movieId and #crewRole = :crewRole ",
+			ExpressionAttributeNames: {
+				"#movieId": "movieId",
+				"#crewRole": "crewRole",
+			},
 			ExpressionAttributeValues: {
-				":m": movieId,
-				":r": role,
+				":movieId": movieId,
+				":crewRole": role,
 			},
 		};
-
 		let commandOutput;
 
-		if (name) {
-			commandInput.FilterExpression = "contains(names, :name)";
-			commandInput.ExpressionAttributeValues!.name = name;
+		if (isValidQueryParams(queryParams)) {
+			const name = queryParams!.name;
+			commandInput.FilterExpression = commandInput.KeyConditionExpression + "and contains(#names, :names)";
+			commandInput.KeyConditionExpression = undefined;
+			commandInput.ExpressionAttributeNames!["#names"] = "names";
+			commandInput.ExpressionAttributeValues![":names"] = name;
 
 			commandOutput = await ddbDocClient.send(new ScanCommand(commandInput));
 		} else {

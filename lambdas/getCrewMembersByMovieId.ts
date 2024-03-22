@@ -1,7 +1,17 @@
 import { APIGatewayProxyHandlerV2 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+	DynamoDBDocumentClient,
+	QueryCommand,
+	QueryCommandInput,
+	ScanCommand,
+	ScanCommandInput,
+} from "@aws-sdk/lib-dynamodb";
+import Ajv from "ajv";
+import schema from "../shared/types.schema.json";
 
+const ajv = new Ajv();
+const isValidQueryParams = ajv.compile(schema.definitions["MovieCrewMembersByMovieQueryParams"] || {});
 const ddbDocClient = createDocumentClient();
 
 export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
@@ -32,17 +42,43 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
 			};
 		}
 
-		const commandOutput = await ddbDocClient.send(
-			new QueryCommand({
-				TableName: process.env.TABLE_NAME,
-				IndexName: "roleIx",
-				KeyConditionExpression: "movieId = :m and begins_with(crewRole, :r) ",
-				ExpressionAttributeValues: {
-					":m": movieId,
-					":r": role,
+		const queryParams = event.queryStringParameters;
+
+		if (!isValidQueryParams(queryParams)) {
+			return {
+				statusCode: 500,
+				headers: {
+					"content-type": "application/json",
 				},
-			})
-		);
+				body: JSON.stringify({
+					message: `Incorrect type. Must match Query parameters schema`,
+					schema: schema.definitions["MovieCrewMembersByMovieQueryParams"],
+				}),
+			};
+		}
+
+		const name = queryParams?.name;
+
+		const commandInput: QueryCommandInput | ScanCommandInput = {
+			TableName: process.env.TABLE_NAME,
+			IndexName: "roleIx",
+			KeyConditionExpression: "movieId = :m and begins_with(crewRole, :r) ",
+			ExpressionAttributeValues: {
+				":m": movieId,
+				":r": role,
+			},
+		};
+
+		let commandOutput;
+
+		if (name) {
+			commandInput.FilterExpression = "contains(names, :name)";
+			commandInput.ExpressionAttributeValues!.name = name;
+
+			commandOutput = await ddbDocClient.send(new ScanCommand(commandInput));
+		} else {
+			commandOutput = await ddbDocClient.send(new QueryCommand(commandInput));
+		}
 
 		return {
 			statusCode: 200,
